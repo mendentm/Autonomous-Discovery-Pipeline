@@ -52,20 +52,34 @@ class VAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
+    def decode(self, z):
+        h = self.decoder_input(z)
+        return self.decoder(h)
+
     def forward(self, x):
         encoded = self.encoder(x)
         mu = self.fc_mu(encoded)
         logvar = self.fc_logvar(encoded)
         z = self.reparameterize(mu, logvar)
-        decoded = self.decoder(z)
+        decoded = self.decode(z)
         return decoded, mu, logvar
 
-def loss_function(recon_x, x, mu, logvar):
-    # Binary Cross Entropy + KL Divergence
-    BCE = nn.functional.binary_cross_entropy(recon_x, x, reduction='sum')
-    # KL Divergence: how much does our latent distribution diverge from a normal distribution?
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return BCE + KLD
+def loss_function(recon_x, x, mu, logvar, beta=1.0, pos_weight=10.0):
+    # GoL patterns are overwhelmingly dead cells (~2-5% alive). Unweighted BCE
+    # converges to "predict all zeros" which is globally optimal for the prior
+    # distribution but useless for generation. pos_weight upweights the alive
+    # class so the model actually has to reconstruct live cells.
+    eps = 1e-7
+    recon = torch.clamp(recon_x, eps, 1.0 - eps)
+    bce_elems = -(pos_weight * x * torch.log(recon) + (1 - x) * torch.log(1 - recon))
+    BCE = bce_elems.mean()
+
+    # KL per-latent-dim, averaged over batch. Same scale as BCE so beta is a
+    # meaningful knob instead of being swamped by sum-reduced BCE.
+    KLD = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1))
+    KLD = KLD / (64 * 64)
+
+    return BCE + beta * KLD
 
 class ModelTrainer:
     def __init__(self, device='cpu'):
@@ -103,7 +117,7 @@ class ModelTrainer:
         with torch.no_grad():
             # Sample from the latent space (Normal distribution)
             z = torch.randn(num_seeds, 128).to(self.device)
-            generated = self.model.decoder(z)
+            generated = self.model.decode(z)
             # Threshold to binary
             grids = (generated.cpu().numpy() > 0.5).astype(np.float32)
             # Squeeze channel dim

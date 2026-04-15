@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.claude/
+
+# Trained model weights (regenerated from main_pipeline.py / benchmark.py)
+*.pth
+
+# Per-run benchmark output (regenerated)
+metrics_*.json

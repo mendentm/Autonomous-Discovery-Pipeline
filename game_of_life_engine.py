@@ -38,45 +38,33 @@ class GameOfLifeEngine:
         # Decode RLE
         grid = np.zeros((self.height, self.width), dtype=np.float32)
         
-        # Parse logic
-        rows = full_pattern.split('$')
-        current_y = 0
-        
-        # Center the pattern
-        # We start drawing from an offset to center it roughly
-        start_y = self.height // 4 
-        start_x = self.width // 4
+        # Strip terminator and tokenize the whole stream at once.
+        # RLE tokens: <count?><tag> where tag in {o, b, $}. A run count applies
+        # to the following tag — including '$', which encodes multi-row skips
+        # (e.g. '2$' means advance two rows). Splitting on '$' naively loses
+        # that information and misaligns every subsequent row.
+        if '!' in full_pattern:
+            full_pattern = full_pattern.split('!', 1)[0]
 
+        start_y = self.height // 4
+        start_x = self.width // 4
         current_y = start_y
-        
-        for row in rows:
-            current_x = start_x
-            if '!' in row:
-                row = row.split('!')[0]
-            
-            # Find all runs like '3o' or 'b'
-            matches = re.findall(r'(\d*)([ob])', row)
-            
-            for count_str, tag in matches:
-                count = int(count_str) if count_str else 1
-                
-                if tag == 'o': # Alive
-                    # Boundary check
-                    if current_y < self.height and current_x + count < self.width:
-                        grid[current_y, current_x:current_x+count] = 1.0
-                    elif current_y < self.height and current_x < self.width:
-                         # Handle edge clipping
-                         remaining = self.width - current_x
-                         grid[current_y, current_x:current_x+remaining] = 1.0
-                
-                current_x += count
-            
-            # Handle empty rows if encoded like '3$' (though typically split by $)
-            # Simple parser assumes $ is newline. 
-            current_y += 1
-            if current_y >= self.height:
-                break
-                
+        current_x = start_x
+
+        for count_str, tag in re.findall(r'(\d*)([ob$])', full_pattern):
+            count = int(count_str) if count_str else 1
+            if tag == '$':
+                current_y += count
+                current_x = start_x
+                if current_y >= self.height:
+                    break
+                continue
+            if tag == 'o':
+                if current_y < self.height and current_x < self.width:
+                    end_x = min(current_x + count, self.width)
+                    grid[current_y, current_x:end_x] = 1.0
+            current_x += count
+
         return grid
 
     def run_simulation(self, initial_grid, generations=200):
